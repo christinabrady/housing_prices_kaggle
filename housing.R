@@ -1,24 +1,27 @@
 options(stringsAsFactors = FALSE)
 setwd("Documents/kaggle/housing/")
+source("~/Documents/codebase/auto/ckit.R")
 library(ReporteRs)
 library(ggvis)
 library(dplyr)
+library(corrplot)
 
 house <- read.csv("AmesHousing.csv")
 
 cleanColNames <- function(dat){
-	tolower(gsub("\\.", "_", colnames(dat)))
+	tolower(gsub("\\.", "", colnames(dat)))
 }
 colnames(house) <- cleanColNames(house)
 
-nomVar <- c("ms_subclass", "ms_zoning", "street", "alley", "land_contour", "lot_config", "neighborhood", "condition_1", "condition_2", "bldg_type", "house_style", "roof_style", "roof_matl", "exterior_1st", "exterior_2nd", "mas_vnr_type", "foundation", "heating", "central_air", "garage_type", "misc_feature", "sale_type", "sale_condition", "electrical")
-ordVar <- c("lot_shape", "utilities", "land_slope", "overall_qual", "overall_cond", "exter_qual", "exter_cond", "bsmt_qual", "bsmt_cond", "bsmt_exposure", "bsmtfin_type_1", "bsmtfin_type_2", "heating_qc", "electrical", "kitchen_qual", "functional", "fireplace_qu", "garage_finish", "garage_qual", "garage_cond", "paved_drive", "pool_qc", "fence")
-disVar <- c("year_built", "year_remod_add", "bsmt_full_bath", "bsmt_half_bath", "bedroom_abvgr", "kitchen_abvgr", "totrms_abvgrd", "fireplaces", "garage_yr_blt", "garage_cars", "mo_sold", "yr_sold")
-conVar <- c("lot_frontage", "lot_area", "mas_vnr_area", "bsmtfin_sf_1", "bsmtfin_sf_2", "bsmt_unf_sf", "total_bsmt_sf", "x1st_flr_sf", "x2nd_flr_sf", "low_qual_fin_sf", "gr_liv_area", "garage_area", "wood_deck_sf", "open_porch_sf", "enclosed_porch", "screen_porch", "pool_area", "misc_val")
+### categorize variable types for plotting, according to documentation
+nomVar <- c("mssubclass", "mszoning", "street", "alley", "landcontour", "lotconfig", "neighborhood", "condition1", "condition2", "bldgtype", "housestyle", "roofstyle", "roofmatl", "exterior1st", "exterior2nd", "masvnrtype", "foundation", "heating", "centralair", "garagetype", "miscfeature", "saletype", "salecondition", "electrical")
+ordVar <- c("lotshape", "utilities", "landslope", "overallqual", "overallcond", "exterqual", "extercond", "bsmtqual", "bsmtcond", "bsmtexposure", "bsmtfintype1", "bsmtfintype2", "heatingqc", "electrical", "kitchenqual", "functional", "fireplacequ", "garagefinish", "garagequal", "garagecond", "paveddrive", "poolqc", "fence")
+disVar <- c("yearbuilt", "yearremodadd", "bsmtfullbath", "bsmthalfbath", "bedroomabvgr", "kitchenabvgr", "totrmsabvgrd", "fireplaces", "garageyrblt", "garagecars", "mosold", "yrsold")
+conVar <- c("lotfrontage", "lotarea", "masvnrarea", "bsmtfinsf1", "bsmtfinsf2", "bsmtunfsf", "totalbsmtsf", "x1stflrsf", "x2ndflrsf", "lowqualfinsf", "grlivarea", "garagearea", "wooddecksf", "openporchsf", "enclosedporch", "screenporch", "poolarea", "miscval")
 
 
 ### plotting functions ###
-plotting_boxes <- function(dat, var, doc){
+plotBoxes <- function(dat, var, doc){
 	print(var)
 	form <- paste("saleprice~", var)
 	freqs <- table(house[, var])
@@ -29,7 +32,7 @@ plotting_boxes <- function(dat, var, doc){
 		})
 }
 
-plotting_histograms <- function(dat, var, doc){
+plotHistograms <- function(dat, var, doc){
 	print(var)
 	doc <- addParagraph(doc, value = var)
 	doc <- addPlot(doc, function(){
@@ -37,7 +40,7 @@ plotting_histograms <- function(dat, var, doc){
 		})
 }
 
-plotting_dots <- function(dat, var, doc){
+plotDots <- function(dat, var, doc){
 	print(var)
 	doc <- addParagraph(doc, value = var)
 	doc <- addPlot(doc, function(){
@@ -45,15 +48,17 @@ plotting_dots <- function(dat, var, doc){
 		})
 }
 ### exploration
-doc <- docx()
-lapply(nomVar, function(vs) plotting_boxes(house, vs, doc))
-lapply(ordVar, function(vs) plotting_boxes(house, vs, doc))
-lapply(disVar, function(vs) plotting_boxes(house, vs, doc))
-lapply(conVar, function(vs) plotting_histograms(house, vs, doc))
-lapply(conVar, function(vs) plotting_dots(house, vs, doc))
+# doc <- docx()
+# lapply(nomVar, function(vs) plotBoxes(house, vs, doc))
+# lapply(ordVar, function(vs) plotBoxes(house, vs, doc))
+# lapply(disVar, function(vs) plotBoxes(house, vs, doc))
+# lapply(conVar, function(vs) plotHistograms(house, vs, doc))
+# lapply(conVar, function(vs) plotDots(house, vs, doc))
+#
+# writeDoc(doc, "housingviz.docx")
 
-writeDoc(doc, "housing_viz.docx")
-
+### How many and which categorical variables have levels with only one observation?
+### These will cause problems when splitting the data into training and test sets and running regressions. ###
 oneoccur <- unlist(lapply(c(nomVar, ordVar, disVar), function(cl){
 	tb <- table(house[, cl])
 	if(sum(tb > 1) == length(tb)){
@@ -65,143 +70,108 @@ oneoccur <- unlist(lapply(c(nomVar, ordVar, disVar), function(cl){
 
 qualitylevels <- c("Ex", "Gd", "TA", "Fa", "Po")
 
-### ms_subclass has 1 level with 1 observation. In terms of saleprice, it fits best in subclass 050 (close to the median)
-### so I recoded it to that class
-house$ms_subclass[house$ms_subclass == 150] <- 50
+dataManip <- function(dat){
+	### mssubclass has 1 level with 1 observation. In terms of saleprice, it fits best in subclass 050 (close to the median)
+	### so I recoded it to that class
+	dat$mssubclass[dat$mssubclass == 150] <- 50
 
-### neighborhood
-house <- house[order(house$saleprice), ]
-plot(house$saleprice)
-### install ggvis in order to use tooltip
+	dat$mszoning[dat$mszoning == "I (all)"] <- "C (all)"
+	### condition2
+	### based on distributions of saleprice based on condition 2, set to Norm, PosA, PosN and Other
+	dat$condition2[dat$condition2 %in% c("Artery", "Feedr", "RRAe", "RRNe", "RRNn")] <- "Other"
 
-### condition_2
-### based on distributions of saleprice based on condition 2, set to Norm, PosA, PosN and Other
-house$condition_2[house$condition_2 %in% c("Artery", "Feedr", "RRAe", "RRNe", "RRNn")] <- "Other"
+	### roof matl:
+	### most are concentrated in composite shingles, which has a lot of outliers, tar, wood shingles and wood shakes have higher value though small number
+	### try combining others into composite shingles
+	dat$roofmatl[dat$roofmatl %in% c("ClyTile", "Membrane", "Metal", "Roll")] <- "Compshg"
 
-### roof matl:
-### most are concentrated in composite shingles, which has a lot of outliers, tar, wood shingles and wood shakes have higher value though small number
-### try combining others into composite shingles
-house$roof_matl[house$roof_matl %in% c("ClyTile", "Membrane", "Metal", "Roll")] <- "Compshg"
+	### exterior1st: a lot of variance. not used
+	### exterior2nd: a lot of variance. not used
+	### masvnrtype: 1 CBlock, fits in the range of None. 23 blank fit within the range of stone
+	dat$masvnrtype[dat$masvnrtype == ""] <- "Stone"
+	dat$masvnrtype[dat$masvnrtype == "CBlock"] <- "None"
 
-### exterior_1st: a lot of variance. not used
-### exterior_2nd: a lot of variance. not used
-### mas_vnr_type: 1 CBlock, fits in the range of None. 23 blank fit within the range of stone
-house$mas_vnr_type[house$mas_vnr_type == ""] <- "Stone"
-house$mas_vnr_type[house$mas_vnr_type == "CBlock"] <- "None"
+	### heating: floor and wall fit in with Grav, OthW fits in with GasW
+	dat$heating[dat$heating == "OthW"] <- "GasW"
+	dat$heating[dat$heating %in% c("Floor", "Wall")] <- "Grav"
 
-### heating: floor and wall fit in with Grav, OthW fits in with GasW
-house$heating[house$heating == "OthW"] <- "GasW"
-house$heating[house$heating %in% c("Floor", "Wall")] <- "Grav"
+	### miscfeature: too many nas
+	### saletype: VWD becomes ConLi whose median is the closest
+	dat$saletype[dat$saletype == "VWD"] <- "ConLI"
+	### utilities: only three don't have public utilities and they still fit in the range of those that do.
+	### bsmtqual: poor and blank got with fair
+	dat$bsmtqual[dat$bsmtqual == "Po"] <- "Fa"
+	dat$bsmtqual[dat$bsmtqual == ""] <- "Fa"
+	dat$bsmtqual[is.na(dat$bsmtqual)] <- "no basement"
+	dat$bsmtqual <- factor(dat$bsmtqual, levels = c(qualitylevels, "no basement"))
 
-### misc_feature: too many nas
-### sale_type: too much variance
-### utilities: only three don't have public utilities and they still fit in the range of those that do.
-### bsmt_qual: poor and blank got with fair
-house$bsmt_qual[house$bsmt_qual == "Po"] <- "Fa"
-house$bsmt_qual[house$bsmt_qual == ""] <- "Fa"
-house$bsmt_qual <- factor(house$bsmt_qual, levels = qualitylevels)
-### bsmt_cond: combine TA, good, excellent and poor, fair, blank
-house$bsmt_cond[house$bsmt_cond %in% c("TA", "Gd", "Ex")] <- "Good or above"
-house$bsmt_cond[house$bsmt_cond %in% c("Po", "Fa", "")] <- "sucks"
-house$bsmt_cond <- factor(house$bsmt_cond, levels = c("Good or above", "sucks"))
-## bsmtfin_type_1: GLQ or not seems to make a difference
-house$bsmtfin_type_1[house$bsmtfin_type_1 != "GLQ"] <- "Not GLQ"
+	### bsmtcond: combine TA, good, excellent and poor, fair, blank
+	dat$bsmtcond[dat$bsmtcond %in% c("TA", "Gd", "Ex")] <- "Good or above"
+	dat$bsmtcond[dat$bsmtcond %in% c("Po", "Fa", "")] <- "sucks"
+	dat$bsmtcond <- factor(dat$bsmtcond, levels = c("Good or above", "sucks"))
 
-## electrical: the blank seems to be circuit breaker and mix does poorly
-house$electrical[house$electrical == ""] <- "SBrkr"
-house$electrical[house$electrical == "Mix"] <- "FuseP"
+	## bsmtfintype1: GLQ or not seems to make a difference
+	dat$bsmtfintype1[dat$bsmtfintype1 != "GLQ"] <- "Not GLQ"
 
-## kitchen_qual: combine poor with fair
-house$kitchen_qual[house$kitchen_qual == "Po"] <- "Fa"
-house$kitchen_qual <- factor(house$kitchen_qual, qualitylevels[1:4])
+	## electrical: the blank seems to be circuit breaker and mix does poorly
+	dat$electrical[dat$electrical == ""] <- "SBrkr"
+	dat$electrical[dat$electrical == "Mix"] <- "FuseP"
 
-### garage_qual: 158 Nas, maybe if I combine it with existence of a garage
-house$garage_qual[house$garage_qual == ""] <- "TA"
-house$garage_qual <- factor(house$garage_qual, qualitylevels)
+	## kitchenqual: combine poor with fair
+	dat$kitchenqual[dat$kitchenqual == "Po"] <- "Fa"
+	dat$kitchenqual <- factor(dat$kitchenqual, qualitylevels[1:4])
 
-house$garage_cond[house$garage_cond == ""] <- "TA"
-house$garage_cond <- factor(house$garage_cond, qualitylevels)
+	### garagequal: 158 Nas, maybe if I combine it with existence of a garage
+	dat$garagequal[dat$garagequal == ""] <- "TA"
+	dat$garagequal <- factor(dat$garagequal, qualitylevels)
 
-house$age <- 2017 - house$year_built
+	dat$garagecond[dat$garagecond == ""] <- "TA"
+	dat$garagecond <- factor(dat$garagecond, qualitylevels)
 
-### bedroom_abvgr: no clear relationship, but factor so that it doesn't turn it into a continuous variable and include the 1 8 bedroom in with the six
-house$bedroom_abvgr[house$bedroom_abvgr >= 6] <- "6 or more"
-house$bedroom_abvgr <- factor(house$bedroom_abvgr, levels = c(0:5, "6 or more"))
+	## year built: turn into a continous variable
+	dat$age <- 2017 - dat$yearbuilt
 
-## totrms_abvgrd: factor and combine 13, 14, 15 in with 16 or more
-house$totrms_abvgrd[house$totrms_abvgrd >= 12] <- "12 or more"
-house$totrms_abvgrd <-factor(house$totrms_abvgrd, levels = c(2:11, "12 or more"))
+	### bedroomabvgr: no clear relationship, but factor so that it doesn't turn it into a continuous variable and include the 1 8 bedroom in with the six
+	dat$bedroomabvgr[dat$bedroomabvgr >= 6] <- "6 or more"
+	dat$bedroomabvgr <- factor(dat$bedroomabvgr, levels = c(0:5, "6 or more"))
 
-## fireplaces: factor and combine 3 and 4
-house$fireplaces[house$fireplaces >= 3] <- "3 or more"
-house$fireplaces <- factor(house$fireplaces, levels = c(0:2, "3 or more"))
+	## totrmsabvgrd: factor and combine 13, 14, 15 in with 16 or more
+	dat$totrmsabvgrd[dat$totrmsabvgrd >= 12] <- "12 or more"
+	dat$totrmsabvgrd <-factor(dat$totrmsabvgrd, levels = c(2:11, "12 or more"))
 
-## garage_yr_blt: turn into continuous variable
-house$garage_age <- 2017 - house$garage_yr_blt
+	## fireplaces: factor and combine 3 and 4
+	dat$fireplaces[dat$fireplaces >= 3] <- "3 or more"
+	dat$fireplaces <- factor(dat$fireplaces, levels = c(0:2, "3 or more"))
 
-## garage_cars: 1 house has a 5 car garage which has more square footage than the living area: look at garage area as a function of living area?
-# library(scatterplot3d)
-# areasub <- subset(house, lot_area < 4000)
-# # scatterplot3d(areasub$lot_area, areasub$total_bsmt_sf, areasub$saleprice)
-#
-# library(rgl)
-# plot3d(areasub$lot_area, areasub$total_bsmt_sf, areasub$saleprice, col="red", size=3)
+	## garageyrblt: turn into continuous variable: age
+	dat$garageage <- 2017 - dat$garageyrblt
+	dat$remodeledage <- dat$yearremodadd - dat$yearbuilt
+	dat$yearremodadd <- NULL
+	dat$order <- NULL
+
+	dat
+
+}
+
+cleanhouse <- dataManip(house)
+## garagecars: 1 house has a 5 car garage which has more square footage than the living area: look at garage area as a function of living area?
+with(house, boxplot(grlivarea~garagecars)) ### in living area and price, it is similar to one car garage, 92 year old single family home and the garage is unfinished
+
 
 #####################
 ##### modeling ######
 #####################
-# ms_zoning (agr only has 2, C has 25 and I has 2)
-# land_contour (different medians, but a lot of overlap in variance)
-# neighborhood
-# building type
-# land_slope
-# overall_qual**
-# overall_cond** (maybe 1, 5, 9, group 2-4 and 6-8)
-# exter_qual
-# exter_cond
-# bsmt_qual
-# bsmt_cond
-# year_built (change to age, maybe group by 5 years or decades)
-# year_remod_add needs transformation, if same as built year, no remodeling
-# gr_liv_area**
-# garage_area**
-# central_air
-# sale_type (combine)
-# sale_condition (some overlap with sale_type)
-# x1st_flr_sf
-# gr_liv_area
-# garage_cars (combine 4 and 5)
-# fireplaces (combine 3 and 4)
-# totrms_abvgrd (combine 12 and higher)
-# bsmt_full_bath (combine 2 and 3)
-# paved_drive
-# garage_finish (combine two blanks with Unf)
-# kitchen_qual (combine poor and fair)
-# heating_qc
-# bsmt_qual (combine blank, Fa, Po)
-# exter_qual
-# NO pool_area
-#
-# histograms show some crazy outliers to be eliminated
-
 #### first try without any transformations
 ## basic cleaning:
-cleanhouse <- subset(house, lot_area < 40000)
+cleanhouse <- subset(house, lotarea < 40000)
 nas <- unlist(lapply(1:ncol(cleanhouse), function(i) sum(is.na(house[, i]))))
 cleanhouse <- cleanhouse[, which(nas < 100)]
-cleanhouse$remodeled_age <- cleanhouse$year_remod_add - cleanhouse$year_built
-cleanhouse$year_remod_add <- NULL
-cleanhouse$order <- NULL
-
-### combine levels with 1 occurence
-### factor numeric ordinal variables
-
-
 
 smp <- sample(1:nrow(cleanhouse), size = round(nrow(cleanhouse)*0.7))
 training <- cleanhouse[smp, ]
 testing <- cleanhouse[-smp, ]
 
+### test my assumptions + number of predictors
 randomlm <- function(n){
 	vars <- sample(1:(ncol(training)-1), n)
 	tmp <- training[, vars]
@@ -212,30 +182,75 @@ randomlm <- function(n){
 	return(list(sigvars, summary(mod)$adj.r))
 }
 
-ranmods <- replicate(20, randomlm(15))
-highr <- unlist(apply(ranmods, 2, function(md) return(ifelse(md[[2]]> 0.75, 1, 0)))
+set.seed(314)
+
+ranmods <- replicate(30, randomlm(10))
+highr <- unlist(apply(ranmods, 2, function(md) return(ifelse(md[[2]]> 0.75, 1, 0))))
 highmods <- ranmods[, as.logical(highr)]
 sigvars <- table(unlist(apply(highmods, 2, function(md) return(md[[1]]))))
 
-randmods10 <- replicate(20, randomlm(10))
-highr10 <- unlist(apply(randmods10, 2, function(md) return(ifelse(md[[2]]> 0.75, 1, 0))))
-highmods10 <- randmods10[, as.logical(highr10)]
-sigvars10 <- table(unlist(apply(highmods10, 2, function(md) return(md[[1]]))))
+randmods15 <- replicate(30, randomlm(15))
+highr15 <- unlist(apply(randmods15, 2, function(md) return(ifelse(md[[2]]> 0.75, 1, 0))))
+highmods15 <- randmods15[, as.logical(highr15)]
+sigvars15 <- table(unlist(apply(highmods15, 2, function(md) return(md[[1]]))))
 
-randmods20 <- replicate(20, randomlm(20))
+randmods20 <- replicate(30, randomlm(20))
 highr20 <- unlist(apply(randmods20, 2, function(md) return(ifelse(md[[2]]> 0.75, 1, 0))))
 highmods20 <- randmods20[, as.logical(highr20)]
 sigvars20 <- table(unlist(apply(highmods20, 2, function(md) return(md[[1]]))))
 
-training_sub <- training[, c("saleprice", "garage_cars", "misc_val", "x1st_flr_sf", "bedroom_abvgr", "house_style",
-														"overall_qual", "year_built", "bldg_type", "bsmt_unf_sf", "condition_2",
-														"lot_area", "overall_cond", "sale_condition", "bsmt_full_bath", "exter_qual",
-														"full_bath", "garage_area", "gr_liv_area", "heating_qc", "kitchen_qual", "land_contour",
-														"lot_config", "mas_vnr_area", "ms_subclass", "total_bsmt_sf", "bsmt_qual")]
-mod20 <- lm(saleprice~ ., training_sub)
-mod20pred <- predict(mod20_4, testing[, c("garage_cars", "misc_val", "x1st_flr_sf", "bedroom_abvgr", "house_style",
-														"overall_qual", "year_built", "bldg_type", "bsmt_unf_sf", "condition_2",
-														"lot_area", "overall_cond", "sale_condition", "bsmt_full_bath", "exter_qual",
-														"full_bath", "garage_area", "gr_liv_area", "heating_qc", "kitchen_qual", "land_contour",
-														"lot_config", "mas_vnr_area", "ms_subclass", "total_bsmt_sf", "bsmt_qual")])
-rmse <- sqrt(sum(testing$saleprice - mod20_4pred)^2/nrow(testing))
+randmods30 <- replicate(30, randomlm(30))
+highr30 <- unlist(apply(randmods30, 2, function(md) return(ifelse(md[[2]]> 0.75, 1, 0))))
+highmods30 <- randmods30[, as.logical(highr30)]
+sigvars30 <- table(unlist(apply(highmods30, 2, function(md) return(md[[1]]))))
+
+
+### 20 predictors improves the minimun R2, 10 predictors sucks, changing the number of replications changes the significant variables
+
+### from looking at the visualizations of the data, the following variables look like good predictors
+mypreds <- c("mszoning", "street", "landcontour", "condition1", "roofstyle", "foundation",
+	"centralair", "saletype", "electrical", "landslope", "overallqual", "exterqual", "bsmtqual",
+	"heatingqc", "electrical", "kitchenqual", "paveddrive", "bsmtfullbath",
+	"totrmsabvgrd", "fireplaces", "garagecars", "totalbsmtsf", "x1stflrsf", "grlivarea",
+	"lotarea")
+
+### potential transformations:
+
+## maybe a collapsed bldgtype, collapsed overallcond, collapsed extercond, collapsed bsmtfintype1, collapsed bedroomabvgr
+## is bsmtexposure correlated with anything else?
+## is garage area correlated with garagecars? Yes! 0.89
+
+### there seems to be a floor on price by age: log of age is negatively correlated with log of saleprice
+
+mod1 <- lm(as.formula(sprintf("saleprice ~ %s", paste(mypreds, collapse = "+"))), data = training)
+par(mfrow = c(2,2))
+plot(mod1)
+summary(mod1)
+
+mod2 <- lm(as.formula(sprintf("log(saleprice) ~ %s", paste(mypreds, collapse = "+"))), data = training)
+par(mfrow = c(2,4))
+plot(mod1)
+plot(mod2)
+summary(mod2) ### slightly improves r2 and more variables are significant
+
+
+### trim down even further:
+mypreds2 <- c("mszoning", "landcontour", "condition1", "roofstyle", "foundation",
+	"centralair", "saletype", "electrical", "landslope", "overallqual", "exterqual", "bsmtqual",
+	"heatingqc", "electrical", "kitchenqual", "paveddrive", "bsmtfullbath",
+	"fireplaces", "garagecars", "totalbsmtsf", "grlivarea",
+	"lotarea")
+mod3 <- lm(as.formula(sprintf("log(saleprice) ~ %s", paste(mypreds2, collapse = "+"))), data = training)
+summary(mod3)
+
+### fucking change colnames to fit the fucking submission file colnames
+colnames(training) <- gsub("", "", colnames(training))
+mypreds2 <- gsub("", "", mypreds2)
+mod3 <- lm(as.formula(sprintf("log(saleprice) ~ %s", paste(mypreds2, collapse = "+"))), data = training)
+
+rmse <- sqrt(mean((log(testing$saleprice) - predict(mod3, testing))^2, na.rm = TRUE))
+
+### test mod3
+kaggletest <- read.csv("test.csv")
+colnames(kaggletest) <- cleanColNames(kaggletest)
+ret <- data.frame(Id = kaggletest$id, SalePrice = predict(mod3, kaggletest))

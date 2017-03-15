@@ -2,6 +2,8 @@
 .Rapp.history
 *.pdf
 *.csv
+*.csv.gz
 *.txt
 *.xlsx
 *.xls
+housing_regression_app
